@@ -28,5 +28,12 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Permissions for image_picker -->
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs camera access to take photos of properties</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo library access to select property images</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access to record property videos</string>
 </dict>
 </plist>

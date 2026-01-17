@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
-import '../models/property_model.dart';
+import '../models/property.dart';
 
-class PropertyDetailScreen extends StatefulWidget {
+class PropertyDetailsScreen extends StatefulWidget {
   final Property property;
 
-  const PropertyDetailScreen({Key? key, required this.property})
-      : super(key: key);
+  const PropertyDetailsScreen({
+    Key? key,
+    required this.property,
+  }) : super(key: key);
 
   @override
-  State<PropertyDetailScreen> createState() => _PropertyDetailScreenState();
+  State<PropertyDetailsScreen> createState() => _PropertyDetailsScreenState();
 }
 
-class _PropertyDetailScreenState extends State<PropertyDetailScreen>
+class _PropertyDetailsScreenState extends State<PropertyDetailsScreen>
     with SingleTickerProviderStateMixin {
-  final PageController _pageController = PageController();
+  final PageController _imagePageController = PageController();
   final ScrollController _desktopScrollController = ScrollController();
   late AnimationController _animationController;
+  int _currentImageIndex = 0;
   bool _isFavorite = false;
   double _contactCardTop = 624.0;
 
@@ -29,7 +31,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     )..forward();
-    
+
     _desktopScrollController.addListener(_onDesktopScroll);
   }
 
@@ -38,7 +40,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     final carouselHeight = 600.0;
     final screenHeight = MediaQuery.of(context).size.height;
     final cardHeight = 520.0;
-    
+
     setState(() {
       if (scrollOffset < carouselHeight) {
         _contactCardTop = carouselHeight - scrollOffset + 24;
@@ -51,11 +53,59 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _imagePageController.dispose();
     _animationController.dispose();
     _desktopScrollController.dispose();
     super.dispose();
   }
+
+  // -------------------- LAUNCHERS --------------------
+
+  Future<void> _launchPhone() async {
+    final uri = Uri(
+      scheme: 'tel',
+      path: widget.property.contactMobile,
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    }
+  }
+
+  Future<void> _launchWhatsApp() async {
+    final cleanNumber = widget.property.contactMobile.replaceAll(RegExp(r'[^\d+]'), '');
+    final uri = Uri.parse(
+      'https://wa.me/$cleanNumber?text=Hi, I am interested in your property: ${widget.property.propertyName}',
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _launchEmail() async {
+    final email = widget.property.contactEmail;
+    if (email == null || email.isEmpty) return;
+
+    final uri = Uri(
+      scheme: 'mailto',
+      path: email,
+      query: 'subject=Inquiry about ${widget.property.propertyName}',
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    }
+  }
+
+  Future<void> _launchMaps() async {
+    final mapLink = widget.property.googleMapsLink;
+    if (mapLink == null || mapLink.isEmpty) return;
+
+    final uri = Uri.parse(mapLink);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  // -------------------- BUILD --------------------
 
   @override
   Widget build(BuildContext context) {
@@ -94,12 +144,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                         const SizedBox(height: 24),
                         _buildDescriptionSection(),
                         const SizedBox(height: 24),
-                        if (widget.property.amenities.isNotEmpty)
+                        if (_hasAmenities())
                           _buildAmenitiesSection(),
-                        if (widget.property.amenities.isNotEmpty)
+                        if (_hasAmenities())
                           const SizedBox(height: 24),
-                        if (_hasNearbyPlaces())
-                          _buildNearbySection(),
                         const SizedBox(height: 100),
                       ],
                     ),
@@ -148,10 +196,8 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
         _buildPriceCard(),
         _buildSpecificationsCard(),
         _buildDescriptionSection(),
-        if (widget.property.amenities.isNotEmpty)
+        if (_hasAmenities())
           _buildAmenitiesSection(),
-        if (_hasNearbyPlaces())
-          _buildNearbySection(),
         _buildAgentContactCard(),
         const SizedBox(height: 100),
       ],
@@ -228,7 +274,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                       ),
                       child: Center(
                         child: Text(
-                          widget.property.agentName.substring(0, 1).toUpperCase(),
+                          widget.property.contactName.substring(0, 1).toUpperCase(),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 32,
@@ -243,7 +289,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            widget.property.agentName,
+                            widget.property.contactName,
                             style: const TextStyle(
                               fontSize: 21,
                               fontWeight: FontWeight.w700,
@@ -252,9 +298,9 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                             ),
                           ),
                           const SizedBox(height: 6),
-                          const Text(
-                            'Property Agent',
-                            style: TextStyle(
+                          Text(
+                            widget.property.listedBy ?? 'Property Agent',
+                            style: const TextStyle(
                               fontSize: 16,
                               color: Color(0xFF6B7280),
                               fontWeight: FontWeight.w500,
@@ -270,7 +316,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   width: double.infinity,
                   height: 60,
                   child: ElevatedButton.icon(
-                    onPressed: () => _makePhoneCall(widget.property.agentPhone),
+                    onPressed: _launchPhone,
                     icon: const Icon(Icons.phone, size: 22),
                     label: const Text('Call Now'),
                     style: ElevatedButton.styleFrom(
@@ -289,55 +335,58 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   ),
                 ),
                 const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _sendWhatsApp(widget.property.agentPhone),
-                    icon: const Icon(Icons.email_outlined, size: 22),
-                    label: const Text('Send Email'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF10B981),
-                      side: const BorderSide(
-                        color: Color(0xFF10B981),
-                        width: 2,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.calendar_today_outlined, size: 22),
-                    label: const Text('Schedule Visit'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF6B7280),
-                      side: BorderSide(
-                        color: Colors.grey.shade300,
-                        width: 2,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.2,
+                if (widget.property.contactEmail != null && widget.property.contactEmail!.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 60,
+                    child: OutlinedButton.icon(
+                      onPressed: _launchEmail,
+                      icon: const Icon(Icons.email_outlined, size: 22),
+                      label: const Text('Send Email'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF10B981),
+                        side: const BorderSide(
+                          color: Color(0xFF10B981),
+                          width: 2,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
                       ),
                     ),
                   ),
-                ),
+                if (widget.property.contactEmail != null && widget.property.contactEmail!.isNotEmpty)
+                  const SizedBox(height: 14),
+                if (widget.property.whatsappAvailable == true)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 60,
+                    child: OutlinedButton.icon(
+                      onPressed: _launchWhatsApp,
+                      icon: const Icon(Icons.chat, size: 22),
+                      label: const Text('WhatsApp'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF25D366),
+                        side: const BorderSide(
+                          color: Color(0xFF25D366),
+                          width: 2,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 26),
                 Container(
                   padding: const EdgeInsets.all(18),
@@ -364,6 +413,8 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
   }
 
   Widget _buildImageCarousel() {
+    final images = widget.property.imageUrls ?? [];
+
     return SliverAppBar(
       expandedHeight: 600,
       pinned: true,
@@ -411,37 +462,43 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
         background: Stack(
           fit: StackFit.expand,
           children: [
-            PageView.builder(
-              controller: _pageController,
-              itemCount: widget.property.images.length,
-              itemBuilder: (context, index) {
-                return CachedNetworkImage(
-                  imageUrl: widget.property.images[index],
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    color: Colors.grey[300],
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF10B981),
+            if (images.isNotEmpty)
+              PageView.builder(
+                controller: _imagePageController,
+                itemCount: images.length,
+                onPageChanged: (index) {
+                  if (!mounted) return;
+                  setState(() => _currentImageIndex = index);
+                },
+                itemBuilder: (context, index) {
+                  return Image.network(
+                    images[index],
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, url, error) => Container(
+                      color: Colors.grey[200],
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.image_not_supported,
+                              size: 64, color: Colors.grey),
+                          SizedBox(height: 8),
+                          Text('Image not available',
+                              style: TextStyle(color: Colors.grey)),
+                        ],
                       ),
                     ),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    color: Colors.grey[200],
-                    child: const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.image_not_supported,
-                            size: 64, color: Colors.grey),
-                        SizedBox(height: 8),
-                        Text('Image not available',
-                            style: TextStyle(color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+                  );
+                },
+              )
+            else
+              Container(
+                color: Colors.grey[300],
+                child: const Icon(
+                  Icons.home,
+                  size: 100,
+                  color: Colors.grey,
+                ),
+              ),
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -456,7 +513,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                 ),
               ),
             ),
-            if (widget.property.images.length > 1)
+            if (images.length > 1)
               Positioned(
                 bottom: 24,
                 left: 0,
@@ -470,8 +527,8 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: SmoothPageIndicator(
-                      controller: _pageController,
-                      count: widget.property.images.length,
+                      controller: _imagePageController,
+                      count: images.length,
                       effect: const WormEffect(
                         dotWidth: 8,
                         dotHeight: 8,
@@ -483,7 +540,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   ),
                 ),
               ),
-            if (widget.property.images.length > 1)
+            if (images.length > 1)
               Positioned(
                 left: 16,
                 top: 0,
@@ -505,10 +562,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                       icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF111827)),
                       iconSize: 24,
                       onPressed: () {
-                        if (_pageController.hasClients) {
-                          final currentPage = _pageController.page?.round() ?? 0;
+                        if (_imagePageController.hasClients) {
+                          final currentPage = _imagePageController.page?.round() ?? 0;
                           if (currentPage > 0) {
-                            _pageController.animateToPage(
+                            _imagePageController.animateToPage(
                               currentPage - 1,
                               duration: const Duration(milliseconds: 300),
                               curve: Curves.easeInOut,
@@ -520,7 +577,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   ),
                 ),
               ),
-            if (widget.property.images.length > 1)
+            if (images.length > 1)
               Positioned(
                 right: 16,
                 top: 0,
@@ -542,10 +599,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                       icon: const Icon(Icons.arrow_forward_ios, color: Color(0xFF111827)),
                       iconSize: 24,
                       onPressed: () {
-                        if (_pageController.hasClients) {
-                          final currentPage = _pageController.page?.round() ?? 0;
-                          if (currentPage < widget.property.images.length - 1) {
-                            _pageController.animateToPage(
+                        if (_imagePageController.hasClients) {
+                          final currentPage = _imagePageController.page?.round() ?? 0;
+                          if (currentPage < images.length - 1) {
+                            _imagePageController.animateToPage(
                               currentPage + 1,
                               duration: const Duration(milliseconds: 300),
                               curve: Curves.easeInOut,
@@ -568,12 +625,12 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     final isDesktop = screenWidth > 1024;
 
     return Container(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(24),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
         ),
       ),
       child: Column(
@@ -584,19 +641,19 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
             children: [
               Expanded(
                 child: Text(
-                  widget.property.title,
+                  widget.property.propertyName,
                   style: const TextStyle(
-                    fontSize: 38,
+                    fontSize: 32,
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF111827),
                     height: 1.2,
-                    letterSpacing: -0.8,
+                    letterSpacing: -0.5,
                   ),
                 ),
               ),
               const SizedBox(width: 12),
               if (isDesktop) ...[
-                // VIDEO BUTTON - LEFTMOST!
+                // Video button
                 Container(
                   width: 64,
                   height: 64,
@@ -608,10 +665,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                     icon: const Icon(Icons.play_circle_outline),
                     iconSize: 36,
                     color: const Color(0xFF6B7280),
-                    onPressed: () {
-                      // Add video view functionality
-                      _showVideoDialog();
-                    },
+                    onPressed: _showVideoDialog,
                     tooltip: 'Video Tour',
                   ),
                 ),
@@ -627,10 +681,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   child: IconButton(
                     icon: _build360Icon(),
                     iconSize: 36,
-                    onPressed: () {
-                      // Add 360 view functionality
-                      _show360ViewDialog();
-                    },
+                    onPressed: _show360ViewDialog,
                     tooltip: '360° View',
                   ),
                 ),
@@ -647,10 +698,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                     icon: const Icon(Icons.view_in_ar_outlined),
                     iconSize: 36,
                     color: const Color(0xFF6B7280),
-                    onPressed: () {
-                      // Add AR view functionality
-                      _showARViewDialog();
-                    },
+                    onPressed: _showARViewDialog,
                     tooltip: 'AR View',
                   ),
                 ),
@@ -667,34 +715,30 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                     icon: const Icon(Icons.vrpano_outlined),
                     iconSize: 36,
                     color: const Color(0xFF6B7280),
-                    onPressed: () {
-                      // Add VR view functionality
-                      _showVRViewDialog();
-                    },
+                    onPressed: _showVRViewDialog,
                     tooltip: 'VR View',
                   ),
                 ),
                 const SizedBox(width: 12),
                 // Location button
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(16),
+                if (widget.property.googleMapsLink != null && widget.property.googleMapsLink!.isNotEmpty)
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.location_on_outlined),
+                      iconSize: 36,
+                      color: const Color(0xFF6B7280),
+                      onPressed: _launchMaps,
+                      tooltip: 'View on Map',
+                    ),
                   ),
-                  child: IconButton(
-                    icon: const Icon(Icons.location_on_outlined),
-                    iconSize: 36,
-                    color: const Color(0xFF6B7280),
-                    onPressed: () {
-                      // Add map/location functionality
-                      _showMapDialog();
-                    },
-                    tooltip: 'View on Map',
-                  ),
-                ),
-                const SizedBox(width: 12),
+                if (widget.property.googleMapsLink != null && widget.property.googleMapsLink!.isNotEmpty)
+                  const SizedBox(width: 12),
                 // Share button
                 Container(
                   width: 64,
@@ -740,58 +784,23 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                 ),
                 const SizedBox(width: 12),
               ],
-              if (widget.property.verified)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF10B981), Color(0xFF059669)],
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF10B981).withOpacity(0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.verified, color: Colors.white, size: 20),
-                      SizedBox(width: 6),
-                      Text(
-                        'Verified',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              _buildPropertyTypeChip(),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           Row(
             children: [
               const Icon(
                 Icons.location_on,
                 color: Color(0xFFEF4444),
-                size: 28,
+                size: 24,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   widget.property.location,
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: 18,
                     color: Color(0xFF6B7280),
                     fontWeight: FontWeight.w500,
                   ),
@@ -804,7 +813,45 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     );
   }
 
-  // Dialog Methods for the new buttons
+  Widget _buildPropertyTypeChip() {
+    final isSell = widget.property.propertyFor == 'sell';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isSell
+            ? [const Color(0xFF3B82F6), const Color(0xFF2563EB)]
+            : [const Color(0xFFF59E0B), const Color(0xFFD97706)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: (isSell ? const Color(0xFF3B82F6) : const Color(0xFFF59E0B)).withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(isSell ? Icons.sell : Icons.key, color: Colors.white, size: 20),
+          const SizedBox(width: 6),
+          Text(
+            isSell ? 'For Sale' : 'For Rent',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Dialog Methods
   void _show360ViewDialog() {
     showDialog(
       context: context,
@@ -924,53 +971,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     );
   }
 
-  void _showMapDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.location_on, color: Color(0xFF10B981)),
-            SizedBox(width: 12),
-            Text('Location'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              height: 200,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Center(
-                child: Icon(Icons.map, size: 64, color: Color(0xFF10B981)),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              widget.property.location,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close', style: TextStyle(color: Color(0xFF10B981))),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPriceCard() {
     return Container(
-      margin: const EdgeInsets.all(20),
-      padding: const EdgeInsets.all(36),
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -980,10 +984,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
             const Color(0xFF3B82F6).withOpacity(0.05),
           ],
         ),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: const Color(0xFF10B981).withOpacity(0.2),
-          width: 1.5,
+          width: 1,
         ),
       ),
       child: Row(
@@ -995,20 +999,20 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                 Text(
                   'Price',
                   style: TextStyle(
-                    fontSize: 19,
+                    fontSize: 17,
                     color: Colors.grey.shade600,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Text(
-                  widget.property.getPriceFormatted(),
+                  widget.property.formattedPrice,
                   style: const TextStyle(
-                    fontSize: 44,
+                    fontSize: 38,
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF10B981),
-                    letterSpacing: -1.2,
+                    letterSpacing: -1,
                     height: 1,
                   ),
                 ),
@@ -1016,15 +1020,15 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
             ),
           ),
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: const Color(0xFF10B981).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
               Icons.account_balance_wallet_outlined,
               color: Color(0xFF10B981),
-              size: 42,
+              size: 38,
             ),
           ),
         ],
@@ -1033,67 +1037,88 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
   }
 
   Widget _buildSpecificationsCard() {
-    final specs = <Map<String, dynamic>>[
-      if (widget.property.bedrooms != null)
-        {
-          'icon': Icons.bed_outlined,
-          'value': '${widget.property.bedrooms}',
-          'label': 'Bedrooms',
-          'color': const Color(0xFF3B82F6),
-          'bgColor': const Color(0xFFEFF6FF),
-        },
-      if (widget.property.bathrooms != null)
-        {
-          'icon': Icons.bathroom_outlined,
-          'value': '${widget.property.bathrooms}',
-          'label': 'Bathrooms',
-          'color': const Color(0xFF8B5CF6),
-          'bgColor': const Color(0xFFF5F3FF),
-        },
-      {
+    final specs = <Map<String, dynamic>>[];
+
+    if (widget.property.bedrooms != null) {
+      specs.add({
+        'icon': Icons.bed_outlined,
+        'value': '${widget.property.bedrooms}',
+        'label': 'Bedrooms',
+        'color': const Color(0xFF3B82F6),
+        'bgColor': const Color(0xFFEFF6FF),
+      });
+    }
+
+    if (widget.property.bathrooms != null) {
+      specs.add({
+        'icon': Icons.bathroom_outlined,
+        'value': '${widget.property.bathrooms}',
+        'label': 'Bathrooms',
+        'color': const Color(0xFF8B5CF6),
+        'bgColor': const Color(0xFFF5F3FF),
+      });
+    }
+
+    if (widget.property.builtUpArea != null) {
+      specs.add({
         'icon': Icons.square_foot_outlined,
-        'value': '${widget.property.area.toInt()}',
+        'value': '${widget.property.builtUpArea!.toInt()}',
         'label': 'Sq Ft',
         'color': const Color(0xFF10B981),
         'bgColor': const Color(0xFFECFDF5),
-      },
-      if (widget.property.furnishing != null)
-        {
-          'icon': Icons.chair_outlined,
-          'value': widget.property.furnishing!,
-          'label': 'Furnishing',
-          'color': const Color(0xFFF59E0B),
-          'bgColor': const Color(0xFFFEF3C7),
-        },
-    ];
+      });
+    }
 
-    specs.addAll([
-      {
-        'icon': Icons.category_outlined,
-        'value': widget.property.type,
-        'label': 'Type',
+    if (widget.property.furnishingStatus != null) {
+      specs.add({
+        'icon': Icons.chair_outlined,
+        'value': widget.property.furnishingStatus!,
+        'label': 'Furnishing',
+        'color': const Color(0xFFF59E0B),
+        'bgColor': const Color(0xFFFEF3C7),
+      });
+    }
+
+    if (widget.property.facingDirection != null) {
+      specs.add({
+        'icon': Icons.explore_outlined,
+        'value': widget.property.facingDirection!,
+        'label': 'Facing',
         'color': const Color(0xFFEC4899),
         'bgColor': const Color(0xFFFCE7F3),
-      },
-      {
-        'icon': Icons.sell_outlined,
-        'value': widget.property.purpose.toUpperCase(),
-        'label': 'Purpose',
+      });
+    }
+
+    if (widget.property.floorNo != null) {
+      specs.add({
+        'icon': Icons.layers_outlined,
+        'value': 'Floor ${widget.property.floorNo}',
+        'label': 'Floor',
         'color': const Color(0xFF6366F1),
         'bgColor': const Color(0xFFEEF2FF),
-      },
-    ]);
+      });
+    }
+
+    if (widget.property.ageOfProperty != null) {
+      specs.add({
+        'icon': Icons.access_time,
+        'value': widget.property.ageOfProperty!,
+        'label': 'Age',
+        'color': const Color(0xFF14B8A6),
+        'bgColor': const Color(0xFFCCFBF1),
+      });
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 24,
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 20,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1104,13 +1129,13 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
           const Text(
             'Property Details',
             style: TextStyle(
-              fontSize: 30,
+              fontSize: 26,
               fontWeight: FontWeight.w800,
               color: Color(0xFF111827),
-              letterSpacing: -0.5,
+              letterSpacing: -0.3,
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           ...specs.map((spec) => Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: _buildSpecItem(
@@ -1134,10 +1159,10 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     Color bgColor,
   ) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: color.withOpacity(0.1),
           width: 1,
@@ -1146,19 +1171,19 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: color.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color, size: 32),
+            child: Icon(icon, color: color, size: 28),
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: 18),
           Expanded(
             child: Text(
               label,
               style: const TextStyle(
-                fontSize: 20,
+                fontSize: 18,
                 color: Color(0xFF6B7280),
                 fontWeight: FontWeight.w600,
               ),
@@ -1167,7 +1192,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
           Text(
             value,
             style: const TextStyle(
-              fontSize: 22,
+              fontSize: 19,
               fontWeight: FontWeight.w700,
               color: Color(0xFF111827),
             ),
@@ -1178,16 +1203,21 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
   }
 
   Widget _buildDescriptionSection() {
+    if (widget.property.propertyDescription == null ||
+        widget.property.propertyDescription!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Container(
-      margin: const EdgeInsets.all(20),
-      padding: const EdgeInsets.all(32),
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 24,
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 20,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1198,34 +1228,34 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xFF10B981).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
                   Icons.description_outlined,
                   color: Color(0xFF10B981),
-                  size: 30,
+                  size: 26,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               const Text(
                 'Description',
                 style: TextStyle(
-                  fontSize: 30,
+                  fontSize: 26,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFF111827),
-                  letterSpacing: -0.5,
+                  letterSpacing: -0.3,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           Text(
-            widget.property.description,
+            widget.property.propertyDescription!,
             style: const TextStyle(
-              fontSize: 19,
+              fontSize: 17,
               height: 1.7,
               color: Color(0xFF4B5563),
               fontWeight: FontWeight.w500,
@@ -1237,96 +1267,11 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
   }
 
   Widget _buildAmenitiesSection() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 24,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.star,
-                  color: Color(0xFF10B981),
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 16),
-              const Text(
-                'Amenities',
-                style: TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF111827),
-                  letterSpacing: -0.5,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Wrap(
-            spacing: 14,
-            runSpacing: 14,
-            children: widget.property.amenities.map((amenity) {
-              return _buildAmenityItem(amenity);
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
+    final amenities = widget.property.nearbyAmenities;
+    if (amenities == null || amenities.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
-  Widget _buildAmenityItem(String amenity) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFECFDF5),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: const Color(0xFF10B981).withOpacity(0.2),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.check_circle,
-            size: 24,
-            color: Color(0xFF10B981),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            amenity,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF111827),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNearbySection() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
       padding: const EdgeInsets.all(28),
@@ -1353,14 +1298,14 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.location_city,
+                  Icons.star,
                   color: Color(0xFF10B981),
                   size: 28,
                 ),
               ),
               const SizedBox(width: 14),
               const Text(
-                'Nearby Places',
+                'Nearby Amenities',
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
@@ -1370,109 +1315,47 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
               ),
             ],
           ),
-          const SizedBox(height: 26),
-          if (widget.property.nearbySchools != null)
-            _buildNearbyCategory(
-              'Schools',
-              Icons.school,
-              widget.property.nearbySchools!,
-              const Color(0xFF3B82F6),
-              const Color(0xFFEFF6FF),
-            ),
-          if (widget.property.nearbyHospitals != null) ...[
-            const SizedBox(height: 18),
-            _buildNearbyCategory(
-              'Hospitals',
-              Icons.local_hospital,
-              widget.property.nearbyHospitals!,
-              const Color(0xFFEF4444),
-              const Color(0xFFFEF2F2),
-            ),
-          ],
-          if (widget.property.nearbyMetro != null) ...[
-            const SizedBox(height: 18),
-            _buildNearbyCategory(
-              'Metro Stations',
-              Icons.train,
-              widget.property.nearbyMetro!,
-              const Color(0xFF8B5CF6),
-              const Color(0xFFF5F3FF),
-            ),
-          ],
+          const SizedBox(height: 24),
+          Wrap(
+            spacing: 14,
+            runSpacing: 14,
+            children: amenities.map((amenity) {
+              return _buildAmenityItem(amenity);
+            }).toList(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildNearbyCategory(
-    String title,
-    IconData icon,
-    List<String> items,
-    Color color,
-    Color bgColor,
-  ) {
+  Widget _buildAmenityItem(String amenity) {
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: color.withOpacity(0.15),
+          color: const Color(0xFF10B981).withOpacity(0.2),
           width: 1,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 26, color: color),
-              ),
-              const SizedBox(width: 14),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: color,
-                  letterSpacing: 0.1,
-                ),
-              ),
-            ],
+          const Icon(
+            Icons.check_circle,
+            size: 22,
+            color: Color(0xFF10B981),
           ),
-          const SizedBox(height: 18),
-          ...items.map((item) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: color,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        item,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          color: Color(0xFF6B7280),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )),
+          const SizedBox(width: 10),
+          Text(
+            amenity,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF111827),
+            ),
+          ),
         ],
       ),
     );
@@ -1538,7 +1421,16 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                     ),
                   ],
                 ),
-                child: const Icon(Icons.person, color: Colors.white, size: 28),
+                child: Center(
+                  child: Text(
+                    widget.property.contactName.substring(0, 1).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -1546,7 +1438,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      widget.property.agentName,
+                      widget.property.contactName,
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -1556,7 +1448,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      widget.property.agentPhone,
+                      widget.property.listedBy ?? 'Property Agent',
                       style: const TextStyle(
                         fontSize: 15,
                         color: Color(0xFF6B7280),
@@ -1573,7 +1465,7 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () => _makePhoneCall(widget.property.agentPhone),
+                  onPressed: _launchPhone,
                   icon: const Icon(Icons.phone, size: 20),
                   label: const Text('Call Now'),
                   style: ElevatedButton.styleFrom(
@@ -1593,31 +1485,59 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _sendWhatsApp(widget.property.agentPhone),
-                  icon: const Icon(Icons.message, size: 20),
-                  label: const Text('WhatsApp'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF10B981),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: const BorderSide(
-                      color: Color(0xFF10B981),
-                      width: 2,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.2,
+              if (widget.property.whatsappAvailable == true)
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _launchWhatsApp,
+                    icon: const Icon(Icons.message, size: 20),
+                    label: const Text('WhatsApp'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF25D366),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      side: const BorderSide(
+                        color: Color(0xFF25D366),
+                        width: 2,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
+          if (widget.property.contactEmail != null && widget.property.contactEmail!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _launchEmail,
+                icon: const Icon(Icons.email_outlined, size: 20),
+                label: const Text('Send Email'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF10B981),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  side: const BorderSide(
+                    color: Color(0xFF10B981),
+                    width: 2,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1641,7 +1561,9 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
           width: double.infinity,
           height: 56,
           child: ElevatedButton(
-            onPressed: () => _sendWhatsApp(widget.property.agentPhone),
+            onPressed: widget.property.whatsappAvailable == true
+              ? _launchWhatsApp
+              : _launchPhone,
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF10B981),
               foregroundColor: Colors.white,
@@ -1650,14 +1572,21 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
               ),
               elevation: 0,
             ),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.chat_bubble_outline, size: 22),
-                SizedBox(width: 10),
+                Icon(
+                  widget.property.whatsappAvailable == true
+                    ? Icons.chat_bubble_outline
+                    : Icons.phone,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
                 Text(
-                  'Contact Agent Now',
-                  style: TextStyle(
+                  widget.property.whatsappAvailable == true
+                    ? 'Contact Agent Now'
+                    : 'Call Agent Now',
+                  style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.2,
@@ -1698,25 +1627,9 @@ class _PropertyDetailScreenState extends State<PropertyDetailScreen>
     );
   }
 
-  bool _hasNearbyPlaces() {
-    return widget.property.nearbySchools != null ||
-        widget.property.nearbyHospitals != null ||
-        widget.property.nearbyMetro != null;
-  }
-
-  void _makePhoneCall(String phoneNumber) async {
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: phoneNumber,
-    );
-    await launchUrl(launchUri);
-  }
-
-  void _sendWhatsApp(String phoneNumber) async {
-    final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
-    final Uri launchUri = Uri.parse(
-        'https://wa.me/$cleanNumber?text=Hi, I am interested in your property: ${widget.property.title}');
-    await launchUrl(launchUri);
+  bool _hasAmenities() {
+    return widget.property.nearbyAmenities != null &&
+        widget.property.nearbyAmenities!.isNotEmpty;
   }
 }
 
@@ -1734,7 +1647,7 @@ class _360IconPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     final center = Offset(size.width / 2, size.height / 2);
-    
+
     final textPainter = TextPainter(
       text: TextSpan(
         text: '360°',
@@ -1747,7 +1660,7 @@ class _360IconPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     );
-    
+
     textPainter.layout();
     textPainter.paint(
       canvas,
@@ -1756,13 +1669,13 @@ class _360IconPainter extends CustomPainter {
         center.dy - textPainter.height / 2,
       ),
     );
-    
+
     final arrowRect = Rect.fromCenter(
       center: center,
       width: size.width * 1.05,
       height: size.height * 0.85,
     );
-    
+
     canvas.drawArc(
       arrowRect,
       1.1,
@@ -1770,7 +1683,7 @@ class _360IconPainter extends CustomPainter {
       false,
       paint,
     );
-    
+
     canvas.drawArc(
       arrowRect,
       1.1,
@@ -1782,16 +1695,16 @@ class _360IconPainter extends CustomPainter {
     final arrowPaint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
-    
+
     final arrowPath = Path();
     final arrowX = center.dx + size.width * 0.15;
     final arrowY = center.dy + size.height * 0.38;
-    
+
     arrowPath.moveTo(arrowX - 8, arrowY);
     arrowPath.lineTo(arrowX + 3, arrowY - 6);
     arrowPath.lineTo(arrowX + 3, arrowY + 6);
     arrowPath.close();
-    
+
     canvas.drawPath(arrowPath, arrowPaint);
   }
 
